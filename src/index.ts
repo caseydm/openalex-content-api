@@ -200,6 +200,22 @@ export default {
       return new Response(`${fileType} mapping not found (native_id not in DB)`, { status: 404 });
     }
 
+	// Track usage (only for actual downloads, not JSON metadata requests)
+	if (!wantJson) {
+		const url = new URL(req.url);
+		let apiKey = url.searchParams.get("api_key");
+		if (!apiKey) {
+			const authHeader = req.headers.get("Authorization");
+			if (authHeader && authHeader.startsWith("Bearer ")) {
+				apiKey = authHeader.substring(7);
+			}
+		}
+
+		if (apiKey) {
+			await trackUsage(env, apiKey);
+		}
+	}
+
     const contentType = isGrobid ? "application/gzip" : "application/pdf";
     const safeName = `${(workId || rawId).replace(/[\/\\:*?"<>|]/g, "_")}${fileExt}`;
     const r2Bucket = isGrobid ? env.GROBID_XML : env.PDFS;
@@ -358,6 +374,27 @@ async function s3GetObject(env: Env, bucket: string, key: string): Promise<Respo
   if (resp.status === 404 || resp.status === 403) return null;
   console.warn("S3 GET unexpected", resp.status, await resp.text().catch(() => ""));
   return null;
+}
+
+/** Usage Tracking **/
+async function trackUsage(env: Env, apiKey: string): Promise<void> {
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+
+  try {
+    // Upsert: Insert new row or increment existing counter
+    await env.openalex_db
+      .prepare(`
+        INSERT INTO api_usage (api_key, day, api_usage_content)
+        VALUES (?, ?, 1)
+        ON CONFLICT(api_key, day) DO UPDATE SET
+          api_usage_content = api_usage_content + 1
+      `)
+      .bind(apiKey, today)
+      .run();
+  } catch (error) {
+    // Log error but don't fail the download request
+    console.error('Failed to track usage:', error);
+  }
 }
 
 /** API Documentation **/

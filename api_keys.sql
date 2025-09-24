@@ -1,4 +1,4 @@
-CREATE TABLE api_keys (
+CREATE TABLE IF NOT EXISTS api_keys (
   -- Primary fields
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   api_key TEXT,
