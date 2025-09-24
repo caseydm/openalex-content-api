@@ -375,7 +375,7 @@ function getApiDocumentation(url: URL): Response {
         parameters: {
           required: {
             id: {
-              type: "string",
+              type: "Path Parameter",
               description: "Work identifier",
               formats: [
                 "OpenAlex Work ID: W123456789",
@@ -384,7 +384,7 @@ function getApiDocumentation(url: URL): Response {
               ]
             },
             format: {
-              type: "string",
+              type: "Query Parameter",
               description: "File format to download",
               values: ["pdf", "parsed-pdf"],
               note: "pdf returns the original PDF, parsed-pdf returns Grobid-processed XML"
