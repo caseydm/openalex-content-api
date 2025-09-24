@@ -19,21 +19,43 @@ export default {
     if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
 
     const url = new URL(req.url);
-    // Expecting: /works/{id}/best_oa_location/pdf or /works/{id}/best_oa_location/parsed-pdf
+    // Expecting: /work/{id} with format query parameter
     const path = url.pathname.replace(/^\/+/, "");
-    const parts = path.split("/"); // ["works", "{id}", "best_oa_location", "pdf|parsed-pdf"]
+    const parts = path.split("/"); // ["work", "{id}"]
 
-    if (parts.length !== 4 || parts[0] !== "works" || parts[2] !== "best_oa_location" ||
-        (parts[3] !== "pdf" && parts[3] !== "parsed-pdf")) {
+    if (parts.length !== 2 || parts[0] !== "work") {
       return new Response("Not Found", { status: 404 });
     }
 
-    const isGrobid = parts[3] === "parsed-pdf";
+    // Get format from query parameter
+    const format = url.searchParams.get("format");
+    if (!format || (format !== "pdf" && format !== "parsed-pdf")) {
+      return new Response("Bad Request: format query parameter must be 'pdf' or 'parsed-pdf'", { status: 400 });
+    }
+
+    const isGrobid = format === "parsed-pdf";
 
     const wantJson = (url.searchParams.get("json") || "").toLowerCase() === "true";
     const rawId = parts[1];
-    const workId = normalizeWorkId(rawId);
-    if (!workId) return jsonOrText(wantJson, 400, { error: "Invalid work id", work_id_input: rawId });
+
+    // Check if it's a DOI (starts with "10.") or OpenAlex work ID
+    const isDoi = rawId.startsWith("10.");
+    let workId: string | null = null;
+    let nativeId: string;
+    let scheme: string;
+
+    if (isDoi) {
+      // For DOI, we'll skip OpenAlex lookup and go directly to DynamoDB
+      nativeId = rawId;
+      scheme = "doi";
+    } else {
+      // For work ID, normalize it first
+      workId = normalizeWorkId(rawId);
+      if (!workId) return jsonOrText(wantJson, 400, { error: "Invalid work id", work_id_input: rawId });
+      // Initialize these for the work ID case - they'll be set after OpenAlex lookup
+      nativeId = "";
+      scheme = "";
+    }
 
     // Check API key authentication
     const authResult = await checkApiKey(req, env);
@@ -51,27 +73,38 @@ export default {
       });
     }
 
-    // 1) OpenAlex lookup (id + best_oa_location)
-    const oa = await fetchOpenAlexWork(workId, 300);
-    if (!oa || !oa.best_oa_location) {
-      return jsonOrText(wantJson, 404, {
-        error: "No best_oa_location for this work",
-        work_id: workId
-      });
-    }
+    let oa: any = null;
+    let locId: string | null = null;
 
-    // 2) Extract native_id from best_oa_location.id (e.g., "doi:10.1063/..." or "pmh:...:id")
-    const locId: string = oa.best_oa_location.id;
-    const colon = locId.indexOf(":");
-    if (colon <= 0 || colon === locId.length - 1) {
-      return jsonOrText(wantJson, 502, {
-        error: "Unrecognized best_oa_location.id format",
-        work_id: workId,
-        best_oa_location_id: locId
-      });
+    if (!isDoi) {
+      // 1) OpenAlex lookup (id + best_oa_location) - only for work IDs
+      oa = await fetchOpenAlexWork(workId!, 300);
+      if (!oa || !oa.best_oa_location) {
+        return jsonOrText(wantJson, 404, {
+          error: "No best_oa_location for this work",
+          work_id: workId
+        });
+      }
+
+      // 2) Extract native_id from best_oa_location.id (e.g., "doi:10.1063/..." or "pmh:...:id")
+      locId = oa.best_oa_location.id;
+      if (!locId) {
+        return jsonOrText(wantJson, 502, {
+          error: "Missing best_oa_location.id",
+          work_id: workId
+        });
+      }
+      const colon = locId.indexOf(":");
+      if (colon <= 0 || colon === locId.length - 1) {
+        return jsonOrText(wantJson, 502, {
+          error: "Unrecognized best_oa_location.id format",
+          work_id: workId,
+          best_oa_location_id: locId
+        });
+      }
+      scheme = locId.slice(0, colon);     // "doi", "pmh", etc.
+      nativeId = locId.slice(colon + 1);  // stored in DynamoDB as native_id
     }
-    const scheme = locId.slice(0, colon);     // "doi", "pmh", etc.
-    const nativeId = locId.slice(colon + 1);  // stored in DynamoDB as native_id
 
     // 3) DynamoDB query by native_id to get UUID
     const dynamoClient = new DynamoDBClient({
@@ -106,7 +139,7 @@ export default {
       console.error("DynamoDB error:", err);
       return jsonOrText(wantJson, 500, {
         error: "Internal server error (DynamoDB)",
-        work_id: workId,
+        work_id: workId || rawId,
         best_oa_location_id: locId,
         scheme,
         native_id: nativeId,
@@ -142,9 +175,9 @@ export default {
 
       return json(200, {
         work_id: rawId,
-        work_api: `https://api.openalex.org/works/${workId}?data-version=2`,
+        work_api: workId ? `https://api.openalex.org/works/${workId}?data-version=2` : null,
         best_oa_location_id: locId,
-	    native_id: nativeId,
+        native_id: nativeId,
         native_id_namespace: scheme,
         mapping_found_in_dynamodb: mappingFound,
         file_uuid: uuid || null,
@@ -162,7 +195,7 @@ export default {
     }
 
     const contentType = isGrobid ? "application/gzip" : "application/pdf";
-    const safeName = `${workId.replace(/[\/\\:*?"<>|]/g, "_")}${fileExt}`;
+    const safeName = `${(workId || rawId).replace(/[\/\\:*?"<>|]/g, "_")}${fileExt}`;
     const r2Bucket = isGrobid ? env.GROBID_XML : env.PDFS;
     const s3Bucket = isGrobid ? GROBID_S3_BACKUP_BUCKET : PDF_S3_BACKUP_BUCKET;
 
@@ -227,7 +260,7 @@ async function checkApiKey(req: Request, env: Env): Promise<{valid: boolean, has
 
     // Check if the key has expired
     if (keyExists.expires_at) {
-      const expiresAt = new Date(keyExists.expires_at);
+      const expiresAt = new Date(keyExists.expires_at as string);
       const now = new Date();
       if (expiresAt <= now) {
         return { valid: false, hasCreditCard: false, error: `API key expired on ${keyExists.expires_at}` };
@@ -248,7 +281,13 @@ async function checkApiKey(req: Request, env: Env): Promise<{valid: boolean, has
 function normalizeWorkId(input: string): string | null {
   if (!input) return null;
   const trimmed = input.trim();
+  // Handle W123 format
   if (/^W\d+$/i.test(trimmed)) return trimmed.toUpperCase();
+  // Handle https://openalex.org/W123 format
+  if (trimmed.startsWith("https://openalex.org/W")) {
+    const match = trimmed.match(/https:\/\/openalex\.org\/(W\d+)/i);
+    if (match) return match[1].toUpperCase();
+  }
   try {
     const u = new URL(trimmed);
     const m = u.pathname.match(/\/W\d+$/i);
