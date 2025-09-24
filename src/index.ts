@@ -27,9 +27,8 @@ export default {
     }
 
     // Expecting: /work/{id} with format query parameter
-    const parts = path.split("/"); // ["work", "{id}"]
-
-    if (parts.length !== 2 || parts[0] !== "work") {
+    // Handle DOIs with forward slashes by taking everything after /work/
+    if (!path.startsWith("work/")) {
       return new Response("Not Found", { status: 404 });
     }
 
@@ -42,7 +41,8 @@ export default {
     const isGrobid = format === "parsed-pdf";
 
     const wantJson = (url.searchParams.get("json") || "").toLowerCase() === "true";
-    const rawId = parts[1];
+    // Extract everything after "work/" as the ID (handles DOIs with slashes)
+    const rawId = decodeURIComponent(path.substring(5)); // Remove "work/" prefix
 
     // Check if it's a DOI (starts with "10.") or OpenAlex work ID
     const isDoi = rawId.startsWith("10.");

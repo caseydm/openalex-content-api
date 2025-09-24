@@ -9,11 +9,13 @@
 	"r2_buckets": [
 		{
 			"binding": "PDFS",
-			"bucket_name": "openalex-pdfs"
+			"bucket_name": "openalex-pdfs",
+			"preview_bucket_name": "openalex-pdfs-dev"
 		},
 		{
 			"binding": "GROBID_XML",
-			"bucket_name": "openalex-grobid-xml"
+			"bucket_name": "openalex-grobid-xml",
+			"preview_bucket_name": "openalex-grobid-xml-dev"
 		}
 	],
 	"d1_databases": [
