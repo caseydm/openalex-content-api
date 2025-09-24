@@ -321,8 +321,17 @@ function normalizeWorkId(input: string): string | null {
 async function fetchOpenAlexWork(workId: string, cacheTtlSeconds = 300): Promise<any | null> {
   const endpoint = `https://api.openalex.org/works/${encodeURIComponent(workId)}?data-version=2&select=id,best_oa_location`;
   const resp = await fetch(endpoint, { cf: { cacheTtl: cacheTtlSeconds, cacheEverything: true } });
-  if (!resp.ok) return null;
-  return await resp.json();
+
+  // Debug logging
+  console.log(`OpenAlex API call for ${workId}: ${resp.status} ${resp.statusText}`);
+  if (!resp.ok) {
+    console.log(`OpenAlex API error: ${await resp.text().catch(() => 'Could not read response')}`);
+    return null;
+  }
+
+  const data = await resp.json();
+  console.log(`OpenAlex response has best_oa_location: ${!!data?.best_oa_location}`);
+  return data;
 }
 
 function json(status: number, data: unknown): Response {
