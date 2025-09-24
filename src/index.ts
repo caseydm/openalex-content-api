@@ -19,8 +19,14 @@ export default {
     if (req.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
 
     const url = new URL(req.url);
-    // Expecting: /work/{id} with format query parameter
     const path = url.pathname.replace(/^\/+/, "");
+
+    // Root endpoint - API documentation
+    if (path === "" || path === "/") {
+      return getApiDocumentation(url);
+    }
+
+    // Expecting: /work/{id} with format query parameter
     const parts = path.split("/"); // ["work", "{id}"]
 
     if (parts.length !== 2 || parts[0] !== "work") {
@@ -352,4 +358,93 @@ async function s3GetObject(env: Env, bucket: string, key: string): Promise<Respo
   if (resp.status === 404 || resp.status === 403) return null;
   console.warn("S3 GET unexpected", resp.status, await resp.text().catch(() => ""));
   return null;
+}
+
+/** API Documentation **/
+function getApiDocumentation(url: URL): Response {
+  const baseUrl = `${url.protocol}//${url.host}`;
+
+  const documentation = {
+    name: "OpenAlex Content API",
+    description: "API for downloading PDFs and parsed content from OpenAlex works",
+    base_url: baseUrl,
+    endpoints: {
+      "/work/{id}": {
+        method: "GET",
+        description: "Download PDF or parsed content for an OpenAlex work or DOI",
+        parameters: {
+          required: {
+            id: {
+              type: "string",
+              description: "Work identifier",
+              formats: [
+                "OpenAlex Work ID: W123456789",
+                "OpenAlex URL: https://openalex.org/W123456789",
+                "DOI: 10.1063/1.4947508"
+              ]
+            },
+            format: {
+              type: "string",
+              description: "File format to download",
+              values: ["pdf", "parsed-pdf"],
+              note: "pdf returns the original PDF, parsed-pdf returns Grobid-processed XML"
+            }
+          },
+          optional: {
+            json: {
+              type: "boolean",
+              description: "Return metadata as JSON instead of downloading file",
+              values: ["true", "false"],
+              default: "false"
+            }
+          }
+        },
+        authentication: {
+          required: true,
+          methods: [
+            {
+              type: "Query Parameter",
+              parameter: "api_key",
+              example: `${baseUrl}/work/W123456789?format=pdf&api_key=YOUR_API_KEY`
+            },
+            {
+              type: "Authorization Header",
+              header: "Authorization: Bearer YOUR_API_KEY",
+              example: `curl -H "Authorization: Bearer YOUR_API_KEY" "${baseUrl}/work/W123456789?format=pdf"`
+            }
+          ],
+          requirements: [
+            "Valid API key is required",
+            "Credit card on file is required for downloads"
+          ]
+        },
+        examples: {
+          "Download PDF by Work ID": `${baseUrl}/work/W2741809807?format=pdf&api_key=YOUR_API_KEY`,
+          "Download Parsed PDF by Work ID": `${baseUrl}/work/W2741809807?format=parsed-pdf&api_key=YOUR_API_KEY`,
+          "Download PDF by DOI": `${baseUrl}/work/10.1063/1.4947508?format=pdf&api_key=YOUR_API_KEY`,
+          "Get metadata as JSON": `${baseUrl}/work/W2741809807?format=pdf&json=true&api_key=YOUR_API_KEY`,
+          "Using Authorization header": `curl -H "Authorization: Bearer YOUR_API_KEY" "${baseUrl}/work/W2741809807?format=pdf"`
+        },
+        responses: {
+          "200": {
+            description: "File download or JSON metadata",
+            content_types: ["application/pdf", "application/gzip", "application/json"]
+          },
+          "400": "Bad Request - Invalid work ID or missing format parameter",
+          "401": "Unauthorized - Invalid or missing API key",
+          "403": "Payment Required - Credit card required for downloads",
+          "404": "Not Found - Work not found or no content available",
+          "500": "Internal Server Error"
+        }
+      }
+    }
+  };
+
+  return new Response(JSON.stringify(documentation, null, 2), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "public, max-age=3600"
+    }
+  });
 }
