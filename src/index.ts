@@ -392,7 +392,7 @@ function getApiDocumentation(url: URL): Response {
           },
           optional: {
             json: {
-              type: "boolean",
+              type: "Query Parameter",
               description: "Return metadata as JSON instead of downloading file",
               values: ["true", "false"],
               default: "false"
