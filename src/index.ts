@@ -26,6 +26,11 @@ export default {
       return getApiDocumentation(url);
     }
 
+    // Usage endpoint
+    if (path === "usage") {
+      return getUsageStats(req, env);
+    }
+
     // Expecting: /work/{id} with format query parameter
     // Handle DOIs with forward slashes by taking everything after /work/
     if (!path.startsWith("work/")) {
@@ -406,6 +411,69 @@ async function trackUsage(env: Env, apiKey: string): Promise<void> {
   }
 }
 
+/** Usage Statistics **/
+async function getUsageStats(req: Request, env: Env): Response {
+  // Check API key authentication
+  const authResult = await checkApiKey(req, env);
+  if (!authResult.valid) {
+    const message = authResult.error || "Provide a valid API key in 'api_key' query parameter or 'Authorization' header";
+    return json(401, {
+      error: "Invalid or missing API key",
+      message: message
+    });
+  }
+
+  // Get API key
+  const url = new URL(req.url);
+  let apiKey = url.searchParams.get("api_key");
+  if (!apiKey) {
+    const authHeader = req.headers.get("Authorization");
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      apiKey = authHeader.substring(7);
+    }
+  }
+
+  if (!apiKey) {
+    return json(401, { error: "API key required" });
+  }
+
+  try {
+    // Get usage statistics for the API key
+    const results = await env.openalex_db
+      .prepare(`
+        SELECT day, api_usage_content
+        FROM api_usage
+        WHERE api_key = ?
+        ORDER BY day DESC
+        LIMIT 30
+      `)
+      .bind(apiKey)
+      .all();
+
+    // Calculate totals
+    const totalUsage = results.results.reduce((sum, row: any) => sum + (row.api_usage_content || 0), 0);
+    const today = new Date().toISOString().split('T')[0];
+    const todayUsage = results.results.find((row: any) => row.day === today)?.api_usage_content || 0;
+
+    return json(200, {
+      api_key: apiKey.substring(0, 8) + "...", // Partial key for security
+      total_downloads: totalUsage,
+      today_downloads: todayUsage,
+      last_30_days: results.results.map((row: any) => ({
+        date: row.day,
+        downloads: row.api_usage_content
+      }))
+    });
+
+  } catch (error) {
+    console.error('Failed to get usage stats:', error);
+    return json(500, {
+      error: "Database error",
+      message: "Unable to retrieve usage statistics"
+    });
+  }
+}
+
 /** API Documentation **/
 function getApiDocumentation(url: URL): Response {
   const baseUrl = `${url.protocol}//${url.host}`;
@@ -413,17 +481,27 @@ function getApiDocumentation(url: URL): Response {
   const docs = {
     name: "OpenAlex Content API",
     description: "Download PDFs and grobid XML from OpenAlex works",
-    endpoint: `${baseUrl}/work/{id}?format={format}&api_key={api_key}`,
-    parameters: {
-      id: "OpenAlex Work ID (W123) or DOI (10.1234/example)",
-      format: "pdf or grobid-xml",
-      api_key: "Your API key (required) as query parameter or Bearer token",
-      json: "true to get metadata instead of file (optional)"
+    endpoints: {
+      download: {
+        url: `${baseUrl}/work/{id}?format={format}&api_key={api_key}`,
+        description: "Download files or get metadata",
+        parameters: {
+          id: "OpenAlex Work ID (W123) or DOI (10.1234/example)",
+          format: "pdf or grobid-xml",
+          api_key: "Your API key (required)",
+          json: "true to get metadata instead of file (optional)"
+        }
+      },
+      usage: {
+        url: `${baseUrl}/usage?api_key={api_key}`,
+        description: "Get usage statistics for your API key"
+      }
     },
     examples: [
       `${baseUrl}/work/W2741809807?format=pdf&api_key=YOUR_KEY`,
       `${baseUrl}/work/10.1063/1.4947508?format=grobid-xml&api_key=YOUR_KEY`,
-      `${baseUrl}/work/W2741809807?format=pdf&json=true&api_key=YOUR_KEY`
+      `${baseUrl}/work/W2741809807?format=pdf&json=true&api_key=YOUR_KEY`,
+      `${baseUrl}/usage?api_key=YOUR_KEY`
     ]
   };
 
