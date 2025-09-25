@@ -34,11 +34,11 @@ export default {
 
     // Get format from query parameter
     const format = url.searchParams.get("format");
-    if (!format || (format !== "pdf" && format !== "parsed-pdf")) {
-      return new Response("Bad Request: format query parameter must be 'pdf' or 'parsed-pdf'", { status: 400 });
+    if (!format || (format !== "pdf" && format !== "grobid-xml")) {
+      return new Response("Bad Request: format query parameter must be 'pdf' or 'grobid-xml'", { status: 400 });
     }
 
-    const isGrobid = format === "parsed-pdf";
+    const isGrobid = format === "grobid-xml";
 
     const wantJson = (url.searchParams.get("json") || "").toLowerCase() === "true";
     // Extract everything after "work/" as the ID (handles DOIs with slashes)
@@ -410,83 +410,24 @@ async function trackUsage(env: Env, apiKey: string): Promise<void> {
 function getApiDocumentation(url: URL): Response {
   const baseUrl = `${url.protocol}//${url.host}`;
 
-  const documentation = {
+  const docs = {
     name: "OpenAlex Content API",
-    description: "API for downloading PDFs and parsed content from OpenAlex works",
-    base_url: baseUrl,
-    endpoints: {
-      "/work/{id}": {
-        method: "GET",
-        description: "Download PDF or parsed content for an OpenAlex work or DOI",
-        parameters: {
-          required: {
-            id: {
-              type: "Path Parameter",
-              description: "Work identifier",
-              formats: [
-                "OpenAlex Work ID: W123456789",
-                "OpenAlex URL: https://openalex.org/W123456789",
-                "DOI: 10.1063/1.4947508"
-              ]
-            },
-            format: {
-              type: "Query Parameter",
-              description: "File format to download",
-              values: ["pdf", "parsed-pdf"],
-              note: "pdf returns the original PDF, parsed-pdf returns Grobid-processed XML"
-            }
-          },
-          optional: {
-            json: {
-              type: "Query Parameter",
-              description: "Return metadata as JSON instead of downloading file",
-              values: ["true", "false"],
-              default: "false"
-            }
-          }
-        },
-        authentication: {
-          required: true,
-          methods: [
-            {
-              type: "Query Parameter",
-              parameter: "api_key",
-              example: `${baseUrl}/work/W123456789?format=pdf&api_key=YOUR_API_KEY`
-            },
-            {
-              type: "Authorization Header",
-              header: "Authorization: Bearer YOUR_API_KEY",
-              example: `curl -H "Authorization: Bearer YOUR_API_KEY" "${baseUrl}/work/W123456789?format=pdf"`
-            }
-          ],
-          requirements: [
-            "Valid API key is required",
-            "Credit card on file is required for downloads"
-          ]
-        },
-        examples: {
-          "Download PDF by Work ID": `${baseUrl}/work/W2741809807?format=pdf&api_key=YOUR_API_KEY`,
-          "Download Parsed PDF by Work ID": `${baseUrl}/work/W2741809807?format=parsed-pdf&api_key=YOUR_API_KEY`,
-          "Download PDF by DOI": `${baseUrl}/work/10.1063/1.4947508?format=pdf&api_key=YOUR_API_KEY`,
-          "Get metadata as JSON": `${baseUrl}/work/W2741809807?format=pdf&json=true&api_key=YOUR_API_KEY`,
-          "Using Authorization header": `curl -H "Authorization: Bearer YOUR_API_KEY" "${baseUrl}/work/W2741809807?format=pdf"`
-        },
-        responses: {
-          "200": {
-            description: "File download or JSON metadata",
-            content_types: ["application/pdf", "application/gzip", "application/json"]
-          },
-          "400": "Bad Request - Invalid work ID or missing format parameter",
-          "401": "Unauthorized - Invalid or missing API key",
-          "403": "Payment Required - Credit card required for downloads",
-          "404": "Not Found - Work not found or no content available",
-          "500": "Internal Server Error"
-        }
-      }
-    }
+    description: "Download PDFs and grobid XML from OpenAlex works",
+    endpoint: `${baseUrl}/work/{id}?format={format}&api_key={api_key}`,
+    parameters: {
+      id: "OpenAlex Work ID (W123) or DOI (10.1234/example)",
+      format: "pdf or grobid-xml",
+      api_key: "Your API key (required) as query parameter or Bearer token",
+      json: "true to get metadata instead of file (optional)"
+    },
+    examples: [
+      `${baseUrl}/work/W2741809807?format=pdf&api_key=YOUR_KEY`,
+      `${baseUrl}/work/10.1063/1.4947508?format=grobid-xml&api_key=YOUR_KEY`,
+      `${baseUrl}/work/W2741809807?format=pdf&json=true&api_key=YOUR_KEY`
+    ]
   };
 
-  return new Response(JSON.stringify(documentation, null, 2), {
+  return new Response(JSON.stringify(docs, null, 2), {
     status: 200,
     headers: {
       "Content-Type": "application/json",
