@@ -166,18 +166,24 @@ export default {
       let in_s3 = false;
 
       if (r2Key) {
-        // Always check R2 (use correct bucket based on file type)
         const r2Bucket = isGrobid ? env.GROBID_XML : env.PDFS;
-        const head = await r2Bucket.head?.(r2Key);
-        if (head) in_r2 = true;
-        else {
-          const obj = await r2Bucket.get(r2Key);
-          if (obj) in_r2 = true;
+        const s3Bucket = isGrobid ? GROBID_S3_BACKUP_BUCKET : PDF_S3_BACKUP_BUCKET;
+
+        // Check R2 and S3 in parallel
+        const [r2Result, s3Result] = await Promise.allSettled([
+          checkR2Availability(r2Bucket, r2Key),
+          s3HeadObject(env, s3Bucket, r2Key)
+        ]);
+
+        // Process R2 result
+        if (r2Result.status === 'fulfilled') {
+          in_r2 = r2Result.value;
         }
 
-        // Always check S3 (use correct backup bucket based on file type)
-        const s3Bucket = isGrobid ? GROBID_S3_BACKUP_BUCKET : PDF_S3_BACKUP_BUCKET;
-        in_s3 = await s3HeadObject(env, s3Bucket, r2Key);
+        // Process S3 result
+        if (s3Result.status === 'fulfilled') {
+          in_s3 = s3Result.value;
+        }
       }
 
       // Self download URL (same endpoint) — will serve R2 or S3 based on availability
@@ -350,6 +356,16 @@ function jsonOrText(wantJson: boolean, status: number, obj: Record<string, unkno
   if (wantJson) return json(status, obj);
   const msg = obj.error ? String(obj.error) : JSON.stringify(obj);
   return new Response(msg, { status });
+}
+
+/** R2 and S3 helpers **/
+async function checkR2Availability(r2Bucket: R2Bucket, key: string): Promise<boolean> {
+  // Try head first, then get as fallback
+  const head = await r2Bucket.head?.(key);
+  if (head) return true;
+
+  const obj = await r2Bucket.get(key);
+  return !!obj;
 }
 
 /** S3 helpers (HEAD + GET) via SigV4 */
